@@ -8,7 +8,7 @@ env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: my-cluster
   ECR_REPOSITORY: kubernetes
-  COMBINED_FILE: ${{ github.workspace }}/app1.yaml  # Updated with absolute path
+  COMBINED_FILE: ./app1.yaml
   NAMESPACE: apps
 
 jobs:
@@ -41,7 +41,6 @@ jobs:
         curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
         sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
         kubectl version --client
-
     # --- AWS AUTHENTICATION ---
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -57,14 +56,12 @@ jobs:
     - name: Download ALB IAM policy
       run: |
         curl -sLO https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.11.0/docs/install/iam_policy.json
-
     - name: Create ALB IAM policy
       run: |
         aws iam create-policy \
           --policy-name AWSLoadBalancerControllerIAMPolicy \
           --policy-document file://iam_policy.json || \
           echo "Policy already exists (continuing...)"
-
     - name: Create IAM service account
       run: |
         ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -75,7 +72,6 @@ jobs:
           --attach-policy-arn=arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy \
           --override-existing-serviceaccounts \
           --approve
-
     # --- IMAGE BUILD (APP1 ONLY) ---
     - name: Login to ECR
       id: login-ecr
@@ -83,11 +79,10 @@ jobs:
 
     - name: Build and push App1 image
       run: |
-        docker build -t app1 -f ${{ github.workspace }}/Dockerfile .
+        docker build -t app1 -f Dockerfile .
         docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
         docker push ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
         echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
-
     # --- KUBERNETES SETUP ---
     - name: Configure kubectl
       run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
@@ -100,7 +95,6 @@ jobs:
       run: |
         helm repo add eks https://aws.github.io/eks-charts
         helm repo update
-
     # --- DEPLOYMENT ---
     - name: Deploy applications
       run: |
@@ -108,7 +102,7 @@ jobs:
         sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.APP1_IMAGE }}|g" ${{ env.COMBINED_FILE }}
         
         # Apply all resources
-        kubectl apply -f ${{ env.COMBINED_FILE }} -n ${{ env.NAMESPACE }}
+        kubectl apply -f app1.yaml -n ${{ env.NAMESPACE }}
         
         # Verify
         kubectl rollout status deployment/app1 -n ${{ env.NAMESPACE }}

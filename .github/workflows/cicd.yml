@@ -84,9 +84,9 @@ jobs:
     - name: Build and push App1 image
       run: |
         docker build -t app1 -f Dockerfile .
-        docker tag app1 ${{ steps.login-ecr.outputs.registry }}/app1:${{ github.sha }}
-        docker push ${{ steps.login-ecr.outputs.registry }}/app1:${{ github.sha }}
-        echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/app1:${{ github.sha }}" >> $GITHUB_ENV
+        docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
+        docker push ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
+        echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
 
     # --- KUBERNETES SETUP ---
     - name: Configure kubectl

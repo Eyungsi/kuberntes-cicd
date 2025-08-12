@@ -8,7 +8,7 @@ env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: my-cluster
   ECR_REPOSITORY: kubernetes
-  COMBINED_FILE: app1.yaml
+  COMBINED_FILE: ${{ github.workspace }}/app1.yaml  # Updated with absolute path
   NAMESPACE: apps
 
 jobs:
@@ -83,7 +83,7 @@ jobs:
 
     - name: Build and push App1 image
       run: |
-        docker build -t app1 -f Dockerfile .
+        docker build -t app1 -f ${{ github.workspace }}/Dockerfile .
         docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
         docker push ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
         echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV

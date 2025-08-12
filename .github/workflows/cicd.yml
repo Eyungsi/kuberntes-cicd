@@ -55,8 +55,7 @@ jobs:
 
     - name: Deploy to Kubernetes
       run: |
-        # Update the image in the deployment file
-        kubectl set image -f ${{ env.DEPLOYMENT_FILE }} app1=${{ env.IMAGE_URI }} --local -o yaml > tmp.yaml && mv tmp.yaml ${{ env.DEPLOYMENT_FILE }}
-        
-        # Apply the changes
-        kubectl apply -f ${{ env.DEPLOYMENT_FILE }}
+        kubectl set image deployment/app1 app1=${{ env.IMAGE_URI }}
+        # Verify deployment
+        kubectl rollout status deployment/app1
+        kubectl get pods -l app=app1

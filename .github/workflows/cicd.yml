@@ -1,4 +1,4 @@
-name: Build, Push and Deploy
+name: Update Kubernetes Deployment
 
 on:
   push:
@@ -8,7 +8,8 @@ env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: kubernetes
   CLUSTER_NAME: my-cluster
-  DEPLOYMENT_FILE: app1.yaml
+  DEPLOYMENT_NAME: app1  # Name of your existing deployment
+  CONTAINER_NAME: app1   # Name of container in your deployment
 
 jobs:
   deploy:
@@ -16,10 +17,10 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
+      uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -29,33 +30,28 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Build, tag, and push image to Amazon ECR
-      id: build-image
+    - name: Build and push new image
       run: |
-        # Build the image
         docker build -t ${{ env.ECR_REPOSITORY }} .
-        
-        # Tag with commit SHA and latest
-        docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-        docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
-        
-        # Push the images
+        docker tag ${{ env.ECR_REPOSITORY }} ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
         docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-        docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
-        
-        # Save the image URI for deployment
         echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> $GITHUB_ENV
 
-    - name: Install kubectl
-      uses: azure/setup-kubectl@v1
-      
-    - name: Configure kubeconfig
+    - name: Configure Kubernetes access
       run: |
         aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.CLUSTER_NAME }}
+        kubectl get nodes  # Verify cluster connection
 
-    - name: Deploy to Kubernetes
+    - name: Update deployment
       run: |
-        kubectl set image deployment/app1 app1=${{ env.IMAGE_URI }}
-        # Verify deployment
-        kubectl rollout status deployment/app1
-        kubectl get pods -l app=app1
+        # Update the image
+        kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} ${{ env.CONTAINER_NAME }}=${{ env.IMAGE_URI }}
+        
+        # Verify rollout
+        kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }}
+        
+        # Check pods
+        kubectl get pods -l app=${{ env.DEPLOYMENT_NAME }}
+        
+        # Verify service
+        kubectl get svc

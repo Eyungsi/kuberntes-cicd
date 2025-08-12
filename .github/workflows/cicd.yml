@@ -8,7 +8,7 @@ env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: my-cluster
   ECR_REPOSITORY: kubernetes
-  COMBINED_FILE: ./app1.yaml
+  COMBINED_FILE: app1.yaml
   NAMESPACE: apps
 
 jobs:
@@ -102,7 +102,7 @@ jobs:
         sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.APP1_IMAGE }}|g" ${{ env.COMBINED_FILE }}
         
         # Apply all resources
-        kubectl apply -f app1.yaml -n ${{ env.NAMESPACE }}
+        kubectl apply -f ${{ env.COMBINED_FILE }} -n ${{ env.NAMESPACE }}
         
         # Verify
         kubectl rollout status deployment/app1 -n ${{ env.NAMESPACE }}

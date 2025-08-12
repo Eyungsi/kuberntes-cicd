@@ -8,7 +8,7 @@ env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: my-cluster
   ECR_REPOSITORY: kubernetes
-  COMBINED_FILE: app1.yaml
+  COMBINED_FILE: ./app1.yaml
   NAMESPACE: apps
 
 jobs:

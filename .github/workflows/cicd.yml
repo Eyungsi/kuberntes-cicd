@@ -8,20 +8,30 @@ env:
   AWS_REGION: us-east-1
   CLUSTER_NAME: my-cluster
   ECR_REPOSITORY: kubernetes
-  COMBINED_FILE: all-in-one.yaml
+  COMBINED_FILE: app1.yaml
   NAMESPACE: apps
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write  # Required for OIDC auth
-      contents: read   # Required for checkout
+      id-token: write
+      contents: read
     
     steps:
     # --- SETUP ---
     - name: Checkout code
       uses: actions/checkout@v3
+
+    # --- INSTALL REQUIRED TOOLS ---
+    - name: Install AWS CLI and eksctl
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
+        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+        eksctl version
 
     # --- AWS AUTHENTICATION ---
     - name: Configure AWS credentials
@@ -30,20 +40,14 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
-        role-to-assume: ${{ secrets.AWS_IAM_ROLE }}  # Optional: Use if assuming a role
 
     # --- IAM SETUP FOR ALB CONTROLLER ---
     - name: Setup OIDC provider
-      run: |
-        eksctl utils associate-iam-oidc-provider \
-          --region ${{ env.AWS_REGION }} \
-          --cluster ${{ env.CLUSTER_NAME }} \
-          --approve
+      run: eksctl utils associate-iam-oidc-provider --cluster ${{ env.CLUSTER_NAME }} --approve
 
     - name: Download ALB IAM policy
       run: |
-        curl -o iam_policy.json \
-          https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.11.0/docs/install/iam_policy.json
+        curl -sLO https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.11.0/docs/install/iam_policy.json
 
     - name: Create ALB IAM policy
       run: |
@@ -61,7 +65,6 @@ jobs:
           --name=aws-load-balancer-controller \
           --attach-policy-arn=arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy \
           --override-existing-serviceaccounts \
-          --region ${{ env.AWS_REGION }} \
           --approve
 
     # --- IMAGE BUILD (APP1 ONLY) ---
@@ -76,6 +79,10 @@ jobs:
         docker push ${{ steps.login-ecr.outputs.registry }}/app1:${{ github.sha }}
         echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/app1:${{ github.sha }}" >> $GITHUB_ENV
 
+    # --- KUBERNETES SETUP ---
+    - name: Configure kubectl
+      run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
     # --- HELM SETUP ---
     - name: Install Helm
       uses: azure/setup-helm@v3
@@ -85,18 +92,7 @@ jobs:
         helm repo add eks https://aws.github.io/eks-charts
         helm repo update
 
-    - name: Install ALB Controller
-      run: |
-        helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
-          --namespace kube-system \
-          --set clusterName=${{ env.CLUSTER_NAME }} \
-          --set serviceAccount.create=false \
-          --set serviceAccount.name=aws-load-balancer-controller
-
     # --- DEPLOYMENT ---
-    - name: Create namespace
-      run: kubectl create namespace ${{ env.NAMESPACE }} || true
-
     - name: Deploy applications
       run: |
         # Replace image placeholder

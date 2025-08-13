@@ -32,6 +32,13 @@ install_tools() {
     curl -s https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 }
 
+configure_kubeconfig() {
+    echo "Configuring kubectl for EKS cluster..."
+    aws eks update-kubeconfig \
+        --region "$AWS_REGION" \
+        --name "$CLUSTER_NAME"
+}
+
 configure_iam() {
     echo "Configuring IAM..."
     ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -86,6 +93,7 @@ install_alb_controller() {
 # Main execution
 main() {
     install_tools
+    configure_kubeconfig  # This was missing in the original script
     configure_iam
     install_cert_manager
     install_alb_controller

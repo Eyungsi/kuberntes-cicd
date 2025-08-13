@@ -61,7 +61,7 @@ jobs:
         image-ref: '${{ env.APP1_IMAGE }}'
         format: 'table'
         exit-code: '1'
-        severity: 'CRITICAL, HIGH'
+        severity: 'CRITICAL,HIGH'
         ignore-unfixed: true
 
     - name: Push Docker image to ECR

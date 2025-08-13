@@ -40,17 +40,16 @@ configure_iam() {
     --override-existing-serviceaccounts \
     --approve
 }
-
-install_cert_manager() {
-  echo "Installing cert-manager..."
-  kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml --validate=false
-  
-  kubectl wait --for=condition=Available \
-    --timeout=300s \
-    -n cert-manager deployment/cert-manager
-  kubectl wait --for=condition=Available \
-    --timeout=300s \
-    -n cert-manager deployment/cert-manager-webhook
+{
+- name: Install cert-manager
+      run: |
+        echo "Installing cert-manager..."
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml --validate=false
+        
+        echo "Waiting for cert-manager to be ready..."
+        kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager
+        kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager-webhook
+        kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager-cainjector
 }
 
 install_alb_controller() {

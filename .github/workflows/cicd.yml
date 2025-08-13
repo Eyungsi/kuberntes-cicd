@@ -36,8 +36,8 @@ jobs:
     # --- INFRASTRUCTURE SETUP ---
     - name: Setup infrastructure
       run: |
-        chmod +x install.sh
-        install.sh ${{ env.CLUSTER_NAME }} ${{ env.AWS_REGION }}
+        chmod +x ./install.sh
+        ./install.sh ${{ env.CLUSTER_NAME }} ${{ env.AWS_REGION }}
 
     # --- IMAGE BUILD ---
     - name: Login to ECR

@@ -101,7 +101,6 @@ jobs:
           ls -la
           exit 1
         fi
-
         # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         

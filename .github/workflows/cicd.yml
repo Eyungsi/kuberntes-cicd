@@ -124,7 +124,7 @@ jobs:
         fi
         
         # Replace placeholder
-        sed -i "s|ECR_IMAGE_PLACEHOLDER|$APP1_IMAGE|g" app1.yaml
+        sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.APP1_IMAGE }}|g" app1.yaml
         
         # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -

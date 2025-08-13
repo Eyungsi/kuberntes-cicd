@@ -53,12 +53,14 @@ jobs:
       run: |
         docker build -t app1 -f Dockerfile .
         docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
-        echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
+        # Set output for deployment job
+        echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
+        echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_OUTPUT
 
     - name: Scan Docker image with Trivy
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: '${{ env.APP1_IMAGE }}'
+        image-ref: '${{ env.IMAGE_URI }}'
         format: 'table'
         exit-code: '0'
         severity: 'CRITICAL,HIGH'
@@ -66,7 +68,11 @@ jobs:
 
     - name: Push Docker image to ECR
       run: |
-        docker push ${{ env.APP1_IMAGE }}
+        docker push ${{ env.IMAGE_URI }}
+        
+    # Pass image URI to deployment job
+    outputs:
+      image-uri: ${{ steps.set_output.outputs.IMAGE_URI }}
 
   deploy:
     needs: build
@@ -93,19 +99,49 @@ jobs:
         chmod +x ./install.sh
         ./install.sh ${{ env.CLUSTER_NAME }} ${{ env.AWS_REGION }}
 
+    - name: Set image from build job
+      id: set_image
+      run: |
+        echo "APP1_IMAGE=${{ needs.build.outputs.image-uri }}" >> $GITHUB_ENV
+        echo "Using image: ${{ needs.build.outputs.image-uri }}"
+
     - name: Deploy applications
       run: |
+        # Debug: show files and environment
+        echo "=== Current directory ==="
+        ls -la
+        echo "=== Environment variables ==="
+        printenv | grep -E 'APP1_IMAGE|NAMESPACE'
+        echo "============================="
+        
         # Verify files exist
         if [ ! -f "app1.yaml" ]; then
           echo "::error::app1.yaml not found!"
-          ls -la
           exit 1
         fi
+        
+        # Verify placeholder exists
+        echo "=== Checking for placeholder in app1.yaml ==="
+        if ! grep -q "ECR_IMAGE_PLACEHOLDER" app1.yaml; then
+          echo "::error::Placeholder 'ECR_IMAGE_PLACEHOLDER' not found in app1.yaml"
+          echo "File contents:"
+          cat app1.yaml
+          exit 1
+        fi
+        
+        # Replace placeholder
+        echo "Replacing placeholder with: $APP1_IMAGE"
+        sed -i "s|ECR_IMAGE_PLACEHOLDER|$APP1_IMAGE|g" app1.yaml
+        
+        # Show modified deployment
+        echo "=== Modified deployment manifest ==="
+        grep -A 5 -B 5 "image:" app1.yaml
+        echo "===================================="
+        
         # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         
-        # Update and apply manifests
-        sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.APP1_IMAGE }}|g" app1.yaml
+        # Apply configuration
         kubectl apply -f app1.yaml -n ${{ env.NAMESPACE }}
         
         # Verify deployments

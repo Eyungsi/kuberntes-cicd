@@ -26,7 +26,7 @@ jobs:
         exit-code: '1'  # Changed to 1 to fail on critical vulnerabilities
         severity: 'CRITICAL'
 
-  build:
+   build:
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -56,7 +56,6 @@ jobs:
         docker tag app1 $IMAGE_URI
         echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
         echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
-
     - name: Scan Docker image with Trivy
       uses: aquasecurity/trivy-action@master
       with:
@@ -73,7 +72,7 @@ jobs:
     # Pass image URI to deployment job
     outputs:
       image_uri: ${{ steps.build-image.outputs.image_uri }}
-
+    
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -99,11 +98,6 @@ jobs:
         chmod +x ./install.sh
         ./install.sh ${{ env.CLUSTER_NAME }} ${{ env.AWS_REGION }}
 
-    - name: Set image from build job
-      run: |
-        echo "APP1_IMAGE=${{ needs.build.outputs.image_uri }}" >> $GITHUB_ENV
-        echo "Using image: ${{ needs.build.outputs.image_uri }}"
-
     - name: Deploy applications
       run: |
         # Debug: show environment variables
@@ -124,7 +118,7 @@ jobs:
         fi
         
         # Replace placeholder
-        sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.APP1_IMAGE }}|g" app1.yaml
+        sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.IMAGE_URI }}|g" app1.yaml
         
         # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -

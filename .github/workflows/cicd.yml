@@ -75,12 +75,22 @@ jobs:
           --override-existing-serviceaccounts \
           --approve
 
+    # --- KUBERNETES SETUP ---
+    - name: Configure kubectl
+      run: |
+        aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+        kubectl get nodes  # Verify connection
+
     # --- INSTALL CERT-MANAGER ---
     - name: Install cert-manager
       run: |
-        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml
+        echo "Installing cert-manager..."
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml --validate=false
+        
         echo "Waiting for cert-manager to be ready..."
-        sleep 30
+        kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager
+        kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager-webhook
+        kubectl wait --for=condition=Available --timeout=300s -n cert-manager deployment/cert-manager-cainjector
 
     # --- INSTALL ALB CONTROLLER ---
     - name: Install AWS Load Balancer Controller
@@ -96,7 +106,7 @@ jobs:
           --set region=${{ env.AWS_REGION }}
         
         echo "Waiting for ALB Controller to be ready..."
-        kubectl -n kube-system wait deployment/aws-load-balancer-controller --for=condition=Available --timeout=120s
+        kubectl -n kube-system wait deployment/aws-load-balancer-controller --for=condition=Available --timeout=300s
 
     # --- IMAGE BUILD (APP1 ONLY) ---
     - name: Login to ECR
@@ -109,10 +119,6 @@ jobs:
         docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
         docker push ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
         echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
-
-    # --- KUBERNETES SETUP ---
-    - name: Configure kubectl
-      run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
     # --- HELM SETUP ---
     - name: Install Helm
@@ -143,8 +149,8 @@ jobs:
         kubectl apply -f app1.yaml -n ${{ env.NAMESPACE }}
         
         # Verify deployments
-        kubectl rollout status deployment/app1 -n ${{ env.NAMESPACE }} --timeout=180s
-        kubectl rollout status deployment/app2 -n ${{ env.NAMESPACE }} --timeout=180s
+        kubectl rollout status deployment/app1 -n ${{ env.NAMESPACE }} --timeout=300s
+        kubectl rollout status deployment/app2 -n ${{ env.NAMESPACE }} --timeout=300s
         
         # Wait for ALB provision (up to 5 minutes)
         echo "Waiting for ALB to be provisioned..."
@@ -157,7 +163,9 @@ jobs:
         
         if [ -z "$INGRESS_HOST" ]; then
           echo "::error::ALB not provisioned after 5 minutes"
+          echo "Debugging information:"
           kubectl get ingress -n ${{ env.NAMESPACE }} -o yaml
+          kubectl describe ingress -n ${{ env.NAMESPACE }}
           kubectl logs -n kube-system deployment/aws-load-balancer-controller
           exit 1
         fi

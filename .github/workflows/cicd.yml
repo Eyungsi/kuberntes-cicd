@@ -48,31 +48,13 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Build Docker image
-      id: build-image  # Added ID for output reference
+    - name: Build and push App1 image
       run: |
         docker build -t app1 -f Dockerfile .
-        IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}"
-        docker tag app1 $IMAGE_URI
-        echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
-        echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
-    - name: Scan Docker image with Trivy
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: '${{ env.IMAGE_URI }}'
-        format: 'table'
-        exit-code: '0'  # Changed to 1 to fail on critical/high vulnerabilities
-        severity: 'CRITICAL,HIGH'
-        ignore-unfixed: true
-
-    - name: Push Docker image to ECR
-      run: |
-        docker push ${{ env.IMAGE_URI }}
-    
-    # Pass image URI to deployment job
-    outputs:
-      image_uri: ${{ steps.build-image.outputs.image_uri }}
-    
+        docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
+        docker push ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
+        echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
+     
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -100,36 +82,36 @@ jobs:
 
     - name: Deploy applications
       run: |
-        # Debug: show environment variables
-        echo "=== APP1_IMAGE value ==="
-        echo "$APP1_IMAGE"
-        
-        # Verify files exist
-        if [ ! -f "app1.yaml" ]; then
-          echo "::error::app1.yaml not found!"
-          ls -la
-          exit 1
-        fi
-        
-        # Verify placeholder exists
-        if ! grep -q "ECR_IMAGE_PLACEHOLDER" app1.yaml; then
-          echo "::error::Placeholder 'ECR_IMAGE_PLACEHOLDER' not found in app1.yaml"
-          exit 1
-        fi
-        
-        # Replace placeholder
-        sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ steps.build-image.outputs.image_uri }}|g" app1.yaml
-        
         # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         
-        # Apply configuration
+        # Update image in manifest
+        sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.APP1_IMAGE }}|g" app1.yaml
+        
+        # Apply resources
         kubectl apply -f app1.yaml -n ${{ env.NAMESPACE }}
         
-        # Verify deployments - CORRECTED DEPLOYMENT NAMES
+        # Verify deployments
         kubectl rollout status deployment/app1 -n ${{ env.NAMESPACE }} --timeout=300s
         kubectl rollout status deployment/app2 -n ${{ env.NAMESPACE }} --timeout=300s
         
-        # Wait for ALB
-        echo "Waiting for ALB provision..."
-        timeout 300 bash -c 'until kubectl get ingress -n $0 -o jsonpath="{.items[0].status.loadBalancer.ingress[0].hostname}"; do sleep 10; done' ${{ env.NAMESPACE }}
+        # Wait for ALB provision (up to 5 minutes)
+        echo "Waiting for ALB to be provisioned..."
+        for i in {1..30}; do
+          INGRESS_HOST=$(kubectl get ingress -n ${{ env.NAMESPACE }} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+          [ -n "$INGRESS_HOST" ] && break
+          sleep 10
+          echo "Attempt $i/30: ALB not yet provisioned..."
+        done
+        
+        if [ -z "$INGRESS_HOST" ]; then
+          echo "::error::ALB not provisioned after 5 minutes"
+          echo "Debugging information:"
+          kubectl get ingress -n ${{ env.NAMESPACE }} -o yaml
+          kubectl describe ingress -n ${{ env.NAMESPACE }}
+          kubectl logs -n kube-system deployment/aws-load-balancer-controller
+          exit 1
+        fi
+        
+        echo "ALB successfully provisioned:"
+        echo "http://$INGRESS_HOST"

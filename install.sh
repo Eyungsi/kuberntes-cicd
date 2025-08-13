@@ -40,9 +40,8 @@ configure_iam() {
     --override-existing-serviceaccounts \
     --approve
 }
-{
-- name: Install cert-manager
-      run: |
+
+install_tools() {
         echo "Installing cert-manager..."
         kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml --validate=false
         

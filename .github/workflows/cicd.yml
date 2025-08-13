@@ -1,4 +1,4 @@
-name: Deploy with IAM and Helm
+name: Build, Scan, and Deploy with IAM and Helm
 
 on:
   push:
@@ -12,19 +12,31 @@ env:
   NAMESPACE: apps
 
 jobs:
-  deploy:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Run Trivy filesystem scan (SAST)
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        format: 'table'
+        exit-code: '1'
+        severity: 'CRITICAL'
+
+  build:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     
     steps:
-    # --- SETUP ---
     - name: Checkout code
       uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
-
+    
     # --- AWS AUTHENTICATION ---
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -33,25 +45,54 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # --- INFRASTRUCTURE SETUP ---
+    - name: Login to ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build Docker image
+      run: |
+        docker build -t app1 -f Dockerfile .
+        docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
+        echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
+
+    - name: Scan Docker image with Trivy
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ env.APP1_IMAGE }}'
+        format: 'table'
+        exit-code: '1'
+        severity: 'CRITICAL, HIGH'
+        ignore-unfixed: true
+
+    - name: Push Docker image to ECR
+      run: |
+        docker push ${{ env.APP1_IMAGE }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
     - name: Setup infrastructure
       run: |
         chmod +x ./install.sh
         ./install.sh ${{ env.CLUSTER_NAME }} ${{ env.AWS_REGION }}
 
-    # --- IMAGE BUILD ---
-    - name: Login to ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
-
-    - name: Build and push App1 image
-      run: |
-        docker build -t app1 -f Dockerfile .
-        docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
-        docker push ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
-        echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
-
-    # --- DEPLOYMENT ---
     - name: Deploy applications
       run: |
         # Verify files exist

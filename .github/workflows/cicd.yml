@@ -28,18 +28,15 @@ jobs:
     # --- INSTALL REQUIRED TOOLS ---
     - name: Install AWS CLI and eksctl
       run: |
-        # Install/Update AWS CLI
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip awscliv2.zip
         sudo ./aws/install --update
         aws --version
         
-        # Install eksctl
         curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
         sudo mv /tmp/eksctl /usr/local/bin
         eksctl version
         
-        # Install kubectl
         curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
         sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
         kubectl version --client
@@ -78,6 +75,29 @@ jobs:
           --override-existing-serviceaccounts \
           --approve
 
+    # --- INSTALL CERT-MANAGER ---
+    - name: Install cert-manager
+      run: |
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml
+        echo "Waiting for cert-manager to be ready..."
+        sleep 30
+
+    # --- INSTALL ALB CONTROLLER ---
+    - name: Install AWS Load Balancer Controller
+      run: |
+        helm repo add eks https://aws.github.io/eks-charts
+        helm repo update
+        
+        helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+          -n kube-system \
+          --set clusterName=${{ env.CLUSTER_NAME }} \
+          --set serviceAccount.create=false \
+          --set serviceAccount.name=aws-load-balancer-controller \
+          --set region=${{ env.AWS_REGION }}
+        
+        echo "Waiting for ALB Controller to be ready..."
+        kubectl -n kube-system wait deployment/aws-load-balancer-controller --for=condition=Available --timeout=120s
+
     # --- IMAGE BUILD (APP1 ONLY) ---
     - name: Login to ECR
       id: login-ecr
@@ -98,11 +118,6 @@ jobs:
     - name: Install Helm
       uses: azure/setup-helm@v3
 
-    - name: Add EKS Helm repo
-      run: |
-        helm repo add eks https://aws.github.io/eks-charts
-        helm repo update
-
     # --- PRE-DEPLOYMENT CHECKS ---
     - name: Verify app1.yaml exists
       run: |
@@ -112,22 +127,40 @@ jobs:
           exit 1
         fi
 
-    # --- DEPLOYMENT ---
-    - name: Create namespace if needed
-      run: |
-        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-        kubectl get namespaces
+        # Verify ALB Controller is ready
+        kubectl -n kube-system get pods | grep aws-load-balancer-controller
 
+    # --- DEPLOYMENT ---
     - name: Deploy applications
       run: |
-        # Replace image placeholder
+        # Create namespace
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Update image in manifest
         sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.APP1_IMAGE }}|g" app1.yaml
         
-        # Apply all resources
+        # Apply resources
         kubectl apply -f app1.yaml -n ${{ env.NAMESPACE }}
         
         # Verify deployments
         kubectl rollout status deployment/app1 -n ${{ env.NAMESPACE }} --timeout=180s
         kubectl rollout status deployment/app2 -n ${{ env.NAMESPACE }} --timeout=180s
-        echo "App1 LB URL:"
-        kubectl get svc app1-service -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+        
+        # Wait for ALB provision (up to 5 minutes)
+        echo "Waiting for ALB to be provisioned..."
+        for i in {1..30}; do
+          INGRESS_HOST=$(kubectl get ingress -n ${{ env.NAMESPACE }} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+          [ -n "$INGRESS_HOST" ] && break
+          sleep 10
+          echo "Attempt $i/30: ALB not yet provisioned..."
+        done
+        
+        if [ -z "$INGRESS_HOST" ]; then
+          echo "::error::ALB not provisioned after 5 minutes"
+          kubectl get ingress -n ${{ env.NAMESPACE }} -o yaml
+          kubectl logs -n kube-system deployment/aws-load-balancer-controller
+          exit 1
+        fi
+        
+        echo "ALB successfully provisioned:"
+        echo "http://$INGRESS_HOST"

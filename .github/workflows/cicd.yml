@@ -48,13 +48,12 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Build Docker image
-      id: build-image
+    - name: Build and push App1 image
       run: |
         docker build -t app1 -f Dockerfile .
-        IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}"
-        docker tag app1 $IMAGE_URI
-        echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+        docker tag app1 ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
+        docker push ${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}
+        echo "APP1_IMAGE=${{ steps.login-ecr.outputs.registry }}/kubernetes:${{ github.sha }}" >> $GITHUB_ENV
         
         # Set output for deployment job
         echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
@@ -101,48 +100,19 @@ jobs:
         chmod +x ./install.sh
         ./install.sh ${{ env.CLUSTER_NAME }} ${{ env.AWS_REGION }}
 
-    - name: Set image from build job
-      run: |
-        echo "APP1_IMAGE=${{ needs.build.outputs.image_uri }}" >> $GITHUB_ENV
-        echo "Using image: ${{ needs.build.outputs.image_uri }}"
-
     - name: Deploy applications
       run: |
-        # Debug: show files and environment
-        echo "=== Current directory ==="
-        ls -la
-        echo "=== Environment variables ==="
-        printenv | grep -E 'APP1_IMAGE|NAMESPACE'
-        echo "============================="
-        
         # Verify files exist
         if [ ! -f "app1.yaml" ]; then
           echo "::error::app1.yaml not found!"
+          ls -la
           exit 1
         fi
-        
-        # Verify placeholder exists
-        echo "=== Checking for placeholder in app1.yaml ==="
-        if ! grep -q "ECR_IMAGE_PLACEHOLDER" app1.yaml; then
-          echo "::error::Placeholder 'ECR_IMAGE_PLACEHOLDER' not found in app1.yaml"
-          echo "File contents:"
-          cat app1.yaml
-          exit 1
-        fi
-        
-        # Replace placeholder
-        echo "Replacing placeholder with: $APP1_IMAGE"
-        sed -i "s|ECR_IMAGE_PLACEHOLDER|$APP1_IMAGE|g" app1.yaml
-        
-        # Show modified deployment
-        echo "=== Modified deployment manifest ==="
-        grep -A 5 -B 5 "image:" app1.yaml
-        echo "===================================="
-        
         # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         
-        # Apply configuration
+        # Update and apply manifests
+        sed -i "s|ECR_IMAGE_PLACEHOLDER|${{ env.APP1_IMAGE }}|g" app1.yaml
         kubectl apply -f app1.yaml -n ${{ env.NAMESPACE }}
         
         # Verify deployments
